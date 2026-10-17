@@ -1,0 +1,15 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+*.db
+node_modules/
+dist/
+.pytest_cache/
+*.tsbuildinfo
+frontend/public/voice-notes/*.mp3
+frontend/public/voice-notes/*.m4a
+frontend/public/voice-notes/*.wav
+frontend/public/voice-notes/*.ogg
+frontend/public/voice-notes/*.webm
+backend/data/kokoro/
