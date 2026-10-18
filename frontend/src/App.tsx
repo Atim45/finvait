@@ -415,6 +415,7 @@ export default function App() {
   const chunksRef = useRef<Blob[]>([]);
   const recordingTickRef = useRef<number | undefined>(undefined);
   const recordingLimitRef = useRef<number | undefined>(undefined);
+  const discardRecordingRef = useRef(false);
   const expense = demoExpenses.find((item) => item.id === activeId) ?? demoExpenses[1];
   const currentWeekStart = getWeekStart(new Date());
   const previousWeekStart = new Date(currentWeekStart);
@@ -574,6 +575,7 @@ export default function App() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
+      discardRecordingRef.current = false;
       const supportedTypes = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/webm"];
       const mimeType = supportedTypes.find((type) => MediaRecorder.isTypeSupported(type));
       const recorder = mimeType
@@ -586,7 +588,11 @@ export default function App() {
       recorder.onerror = () => {
         setCustomError("The browser could not record audio. Please try again.");
         setCustomRecording(false);
+        window.clearInterval(recordingTickRef.current);
+        window.clearTimeout(recordingLimitRef.current);
         stream.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
+        recorderRef.current = null;
       };
       recorder.onstop = () => {
         window.clearInterval(recordingTickRef.current);
@@ -598,6 +604,11 @@ export default function App() {
         streamRef.current = null;
         recorderRef.current = null;
         setCustomRecording(false);
+        if (discardRecordingRef.current) {
+          discardRecordingRef.current = false;
+          chunksRef.current = [];
+          return;
+        }
         if (!blob.size) {
           setCustomError("No audio was captured. Please record again.");
           return;
@@ -623,12 +634,60 @@ export default function App() {
     if (recorderRef.current?.state === "recording") recorderRef.current.stop();
   }
 
+  function cancelCustomRecording() {
+    discardRecordingRef.current = true;
+    window.clearInterval(recordingTickRef.current);
+    window.clearTimeout(recordingLimitRef.current);
+    if (recorderRef.current?.state === "recording") recorderRef.current.stop();
+    setCustomAudio(null);
+    setCustomTranscript("");
+    setCustomError("");
+  }
+
+  function selectCustomAudio(file: File | undefined) {
+    if (!file) return;
+    setCustomMode(true);
+    setCustomError("");
+    setCustomTranscript("");
+    if (file.size > 20 * 1024 * 1024) {
+      setCustomAudio(null);
+      setCustomError("Audio files must be 20 MB or smaller.");
+      return;
+    }
+    const supportedAudio = new Set([
+      "audio/aac", "audio/flac", "audio/m4a", "audio/mp3", "audio/mpeg",
+      "audio/mp4", "audio/mpga", "audio/ogg", "audio/opus", "audio/wav",
+      "audio/webm", "audio/x-m4a", "audio/x-wav",
+    ]);
+    const supportedExtensions = new Set(["aac", "flac", "m4a", "mp3", "mp4", "ogg", "opus", "wav", "webm"]);
+    const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
+    if (
+      (file.type && !supportedAudio.has(file.type.split(";", 1)[0].toLowerCase()))
+      || (!file.type && !supportedExtensions.has(extension))
+    ) {
+      setCustomAudio(null);
+      setCustomError("Choose a supported audio file such as MP3, WAV, M4A, OGG, or WebM.");
+      return;
+    }
+    setCustomAudio(file);
+  }
+
   async function transcribeCustomAudio() {
     if (!customAudio) return;
     setCustomError("");
     setCustomTranscript("");
     setCustomTranscribing(true);
-    const mimeType = customAudio.type.split(";", 1)[0] || "audio/webm";
+    const extension = customAudio instanceof File
+      ? customAudio.name.split(".").pop()?.toLowerCase()
+      : undefined;
+    const extensionMimeTypes: Record<string, string> = {
+      aac: "audio/aac", flac: "audio/flac", m4a: "audio/mp4", mp3: "audio/mpeg",
+      mp4: "audio/mp4", ogg: "audio/ogg", opus: "audio/opus", wav: "audio/wav",
+      webm: "audio/webm",
+    };
+    const mimeType = customAudio.type.split(";", 1)[0]
+      || extensionMimeTypes[extension ?? ""]
+      || "audio/webm";
     try {
       const response = await fetch(
         `/api/demo/transcribe-audio?mime_type=${encodeURIComponent(mimeType)}`,
@@ -783,23 +842,24 @@ export default function App() {
       <header className="topbar">
         <a className="brand" href="#" aria-label="Finvait home">
           <span className="brand-symbol">f</span>
-          <span>finvait</span>
+          <span className="brand-copy"><b>finvait</b><small>Personal Finance Assistant</small></span>
         </a>
-        <div className="topbar-note"><span className="online-dot" /> VOICE FINANCE DEMO</div>
+        <div className="header-status">
+          <span className="demo-mode-badge"><i /> Demo mode</span>
+          <span className="topbar-note">Local voice processing</span>
+        </div>
       </header>
 
       <section className="hero">
         <div className="eyebrow"><span className="eyebrow-line" /> MONEY, IN YOUR WORDS</div>
         <h1>Your voice.<br /><span>Your money, in focus.</span></h1>
-        <p>Share a voice note. Finvait helps organize an expense and spot a possible double payment.</p>
+        <p>Share a voice note. Finvait helps organize expenses and flag possible duplicate payments.</p>
       </section>
-
-      <div className="demo-disclosure"><span>DEMO MODE</span> Sample results are preset · custom recordings are transcribed locally with Whisper</div>
 
       <section className="demo-layout">
         <aside className="notes-column">
           <div className="section-heading">
-            <div><div className="eyebrow">YOUR VOICE NOTES</div><h2>Choose a recording</h2></div>
+            <div><div className="eyebrow">TRY A SCRIPTED EXAMPLE</div><h2>Sample voice notes</h2></div>
             <span className="soft-count">02</span>
           </div>
           <div className="note-list">
@@ -815,23 +875,14 @@ export default function App() {
               />
             ))}
           </div>
-          <p className="voice-help">Sample-note transcripts and transaction results are preset. Record a custom note to run real local speech recognition.</p>
-          <button
-            className={`record-custom-button ${customRecording ? "is-recording" : ""}`}
-            onClick={customRecording ? stopCustomRecording : startCustomRecording}
-            disabled={customTranscribing}
-          >
-            <span className="record-custom-icon">{customRecording ? "■" : "●"}</span>
-            {customRecording ? "Stop recording" : "Record a custom voice"}
-            {!customRecording && <span className="record-custom-arrow">→</span>}
-          </button>
+          <p className="voice-help">Preset transcripts and results are illustrative. To transcribe your own voice, use the recorder in the main panel.</p>
         </aside>
 
         <section className="workspace" aria-live="polite">
           <div className="workspace-head">
-            <div><div className="eyebrow">{customMode ? "CUSTOM VOICE" : "PROCESSING WORKSPACE"}</div><h2>{customMode ? "Your recording" : stage === "duplicate" ? "One detail to confirm" : stage === "resolved" ? "Duplicate risk cleared" : stage === "separate" ? "Both expenses kept" : "Expense assistant"}</h2></div>
-            <span className={`simulation-pill ${stage === "processing" || customRecording || customTranscribing ? "pill-running" : ""}`}>
-              <i /> {customMode ? customRecording ? "RECORDING" : customTranscribing ? "LOCAL WHISPER" : "CUSTOM AUDIO" : stage === "processing" ? "PROCESSING" : "SIMULATED"}
+            <div><div className="eyebrow">{customMode ? "PRIVATE VOICE NOTE" : "GUIDED DEMO"}</div><h2>{customMode ? "Your recording" : stage === "duplicate" ? "One detail to confirm" : stage === "resolved" ? "Duplicate risk cleared" : stage === "separate" ? "Both expenses kept" : "Record an expense"}</h2></div>
+            <span className={`simulation-pill ${stage === "processing" || customRecording || customTranscribing ? "pill-running" : ""} ${customMode && customError ? "pill-error" : ""}`}>
+              <i /> {customMode ? customError ? "ERROR" : customRecording ? "RECORDING" : customTranscribing ? "PROCESSING" : customTranscript ? "TRANSCRIBED" : customAudio ? "AUDIO READY" : "READY" : stage === "processing" ? "PROCESSING" : "PRESET DEMO"}
             </span>
           </div>
 
@@ -841,8 +892,12 @@ export default function App() {
                 <>
                   <div className="recording-indicator"><span /><span /><span /><span /><span /></div>
                   <h3>Recording your voice</h3>
-                  <p className="recording-time">{formatRecordingTime(customSeconds)} <span>· 60 sec max</span></p>
-                  <button className="primary-button stop-recording-button" onClick={stopCustomRecording}>Stop recording <span>■</span></button>
+                  <p className="recording-time"><span className="recording-dot" />{formatRecordingTime(customSeconds)} <span>· 60 sec max</span></p>
+                  <div className="recording-actions">
+                    <button className="secondary-button" onClick={cancelCustomRecording}>Cancel</button>
+                    <button className="primary-button stop-recording-button" onClick={stopCustomRecording}>Stop recording <span>■</span></button>
+                  </div>
+                  <p className="custom-privacy-note">Your microphone is active. Audio is sent only to your local backend for transcription and is not retained.</p>
                 </>
               ) : customTranscribing ? (
                 <>
@@ -858,23 +913,35 @@ export default function App() {
                     <div className="json-heading"><span>LOCALLY TRANSCRIBED</span><span>FASTER-WHISPER</span></div>
                     <p>{customTranscript}</p>
                   </div>
-                  <p className="custom-description">Transcript created locally from your recording. Transaction details are not added to the spending history.</p>
+                  <p className="custom-description">Transcript created locally. This prototype does not extract or save transaction details from your custom recording.</p>
                   <button className="text-button custom-again" onClick={startCustomRecording}>Record another voice note <span>↻</span></button>
                 </>
               ) : customAudio ? (
                 <>
                   <div className="sound-orb"><span>⌁</span></div>
                   <h3>Voice note ready</h3>
-                  <p className="custom-description">Listen to your recording, then transcribe it using the local Whisper model.</p>
+                  <p className="custom-description">Listen back, then transcribe your audio locally with Whisper. Audio is not retained by the backend.</p>
                   {customAudioUrl && <audio className="custom-audio-player" controls src={customAudioUrl}>Your browser cannot play this recording.</audio>}
-                  <button className="primary-button" onClick={transcribeCustomAudio} disabled={customTranscribing}>Transcribe with local Whisper <span>→</span></button>
+                  <div className="audio-ready-actions">
+                    <button className="primary-button" onClick={transcribeCustomAudio} disabled={customTranscribing}>Transcribe locally <span>→</span></button>
+                    <button className="text-button" onClick={() => { setCustomAudio(null); setCustomTranscript(""); }}>Remove audio</button>
+                  </div>
                 </>
               ) : (
                 <>
                   <div className="sound-orb"><span>⌁</span></div>
                   <h3>Record a custom voice note</h3>
-                  <p className="custom-description">Use the button on the left to start recording. Your audio is sent only to the local backend for transcription.</p>
-                  <button className="primary-button" onClick={startCustomRecording}>Start recording <span>●</span></button>
+                  <p className="custom-description">Record an expense in your own words. Audio is transcribed locally and is not retained.</p>
+                  <div className="voice-start-actions">
+                    <button className="microphone-button" onClick={startCustomRecording} aria-label="Start recording an expense" title="Start recording"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="8" y="3" width="8" height="13" rx="4" stroke="currentColor" strokeWidth="1.8"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3m-4 0h8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/></svg></button>
+                    <span className="mic-action-label">Tap to record</span>
+                  </div>
+                  <label className="upload-audio-button">
+                    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M10 13V3m0 0L6.5 6.5M10 3l3.5 3.5M4 12.5v3A1.5 1.5 0 0 0 5.5 17h9a1.5 1.5 0 0 0 1.5-1.5v-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                    Choose an audio file
+                    <input type="file" accept="audio/*,.m4a,.ogg,.opus,.webm" onChange={(event) => { selectCustomAudio(event.target.files?.[0]); event.currentTarget.value = ""; }} />
+                  </label>
+                  <p className="custom-privacy-note">Your microphone stays off until you start recording. Audio is processed locally and not stored.</p>
                 </>
               )}
               {customError && <div className="inline-error" role="alert">{customError}</div>}
@@ -883,10 +950,23 @@ export default function App() {
           <>
           {stage === "idle" && (
             <div className="empty-workspace">
-              <div className="sound-orb"><span>⌁</span></div>
-              <h3>Ready when you are</h3>
-              <p>Select a voice note, then run the demo to see how the expense is interpreted.</p>
-              <button className="primary-button" onClick={processVoiceNote}>Process voice note <span>→</span></button>
+              <div className="voice-intro">
+                <div className="voice-start-actions">
+                  <button className="microphone-button" onClick={startCustomRecording} aria-label="Start recording an expense" title="Start recording"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="8" y="3" width="8" height="13" rx="4" stroke="currentColor" strokeWidth="1.8"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3m-4 0h8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/></svg></button>
+                  <span className="mic-action-label">Tap to record</span>
+                </div>
+                <h3>Tell us about an expense</h3>
+                <p>Speak naturally in Hindi or English. Your recording is transcribed on this computer.</p>
+              </div>
+              <div className="idle-actions">
+                <label className="upload-audio-button">
+                  <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M10 13V3m0 0L6.5 6.5M10 3l3.5 3.5M4 12.5v3A1.5 1.5 0 0 0 5.5 17h9a1.5 1.5 0 0 0 1.5-1.5v-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                  Upload audio
+                  <input type="file" accept="audio/*,.m4a,.ogg,.opus,.webm" onChange={(event) => { selectCustomAudio(event.target.files?.[0]); event.currentTarget.value = ""; }} />
+                </label>
+                <button className="preset-action-button" onClick={processVoiceNote}>Try a preset demo <span>→</span></button>
+              </div>
+              <p className="custom-privacy-note">Your microphone stays off until you start recording. Audio is sent to the local backend for transcription and is not retained.</p>
             </div>
           )}
 
@@ -916,8 +996,8 @@ export default function App() {
 
               {stage === "duplicate" && (
                 <div className="match-alert">
-                  <div className="alert-top"><span className="alert-icon">!</span><div><b>Possible duplicate detected</b><small>Illustrative payment alert · not a real SMS connection</small></div></div>
-                  <div className="match-record"><span className="sms-icon">₹</span><div><b>Online payment · {formatRupees(100)}</b><small>Today · 10:00 AM · sample alert</small></div><span className="match-tag">POSSIBLE MATCH</span></div>
+                  <div className="alert-top"><span className="alert-icon">!</span><div><b>Possible duplicate · Needs review</b><small>Illustrative alert; same amount only, not a real SMS connection</small></div></div>
+                  <div className="match-record"><span className="sms-icon">₹</span><div><b>Online payment · {formatRupees(100)}</b><small>Today · 10:00 AM · sample alert</small></div><span className="match-tag">NEEDS REVIEW</span></div>
                   <div className="assistant-question">
                     <span className="assistant-avatar">f</span>
                     <p>{duplicateQuestion}</p>
@@ -970,7 +1050,7 @@ export default function App() {
           <div>
             <div className="eyebrow"><span className="eyebrow-line" /> YOUR TRACKED ACTIVITY</div>
             <h2>Expense history &amp; comparison</h2>
-            <p>Reviewed custom voice notes saved in this browser. Preset demo examples are excluded.</p>
+            <p>Browser-stored activity and clearly identified illustrative entries. Preset walkthrough results are separate.</p>
           </div>
           <div className="history-meta">
             <span className="history-count">{processedExpenses.length} {processedExpenses.length === 1 ? "record" : "records"}</span>

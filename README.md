@@ -1,44 +1,131 @@
-# Finvait — voice expense demo
+# Finvait
 
-A small presenter-led prototype for demonstrating a Hindi/Hinglish voice-first finance assistant:
+**Your voice. Your money, in focus.**
 
-1. Choose one of two sample voice-note transcripts: “Aaj 200 ki sabzi order kari hai” or “Today i spend 100 for breakfast.”
-2. Run the staged, simulated processing flow and show the illustrative structured expense JSON.
-3. For the breakfast example, show an explicitly labelled sample payment alert, play the Hindi confirmation question through browser speech, and choose whether to treat it as the same payment or keep both records.
+Finvait is a voice-first personal finance assistant concept for making everyday spending easier to understand through natural conversation. It is being built around the way people actually describe expenses—in Hindi, Hinglish, and English—and aims to turn transaction records into clear, useful answers.
 
-The two preset voice notes use scripted transcripts and results. Their audio files play locally in the browser; the preset processing does not transcribe them. The optional custom recording flow below does real local speech transcription. The demo does **not** read SMS or email, connect to a bank, or persist simulated results. Browser speech depends on the device's available speech synthesis voices.
+> **Project status:** This repository contains a working local MVP and presentation demo. Some flows use real local speech transcription; preset transaction examples and the SMS ledger are illustrative. This is not a banking app and does not connect to a user's bank or messages.
 
-The optional **Record a custom voice** flow captures audio in the browser and sends it to the local FastAPI backend, where `faster-whisper` transcribes it on the same computer. It requires no API key. The transcript is displayed but is not turned into a saved transaction; audio itself is not retained. The weekly comparison shows the named presentation voice-note records and clearly marked illustrative entries, and compares calendar weeks (Monday–Sunday).
+## The idea
 
-The **Generate speech** action synthesizes the suggested agent response with [Kokoro ONNX](https://github.com/thewh1teagle/kokoro-onnx), an open-source MIT-licensed local inference runtime using the Apache-2.0 Kokoro model. The Finvait backend downloads the int8 model (~108 MB) and voice pack (~26 MB) on first use, caches them under `backend\data\kokoro\`, and returns a WAV for the browser to play. No speech API key is used. Use **Copy audio link** to create a standalone `/listen.html` link; it opens a minimal audio-only page and generates the speech when opened, without loading the full Finvait site. Open the demo from its LAN address before copying the link so it can be shared with another device on the same Wi-Fi. The browser may require a tap on the audio play control. First-time model download requires internet access. The default voice is English (`af_sarah`); Kokoro also has Hindi voices, but this English response currently uses the English voice.
+I spent a day building with Voice AI at the **Voice AI x Fintech Buildathon at Bachatt's office**. Hosted by **Anupam Singh**, Co-founder & CEO of Digia, and **Mayank Agarwal**, Co-founder & CEO of Bachatt, the buildathon was my first hands-on introduction to building with Voice AI.
 
-On the first page load, the comparison imports the four named finance audio files currently in `frontend\public\voice-notes\` as prior-week entries and adds three clearly marked illustrative entries to make both week totals visible. The supplied filenames are used as the correction because the local Whisper transcript for these short clips was unclear; exact transaction dates were not provided, so those four entries are assigned to last week without claiming a particular day. The gold purchase is categorized as an investment and excluded from spending totals. Synthetic amounts are visibly identified as **SAMPLE** and called out in the comparison notice. The SMS subscription panel and its generated user-facing agent response are also explicitly illustrative; no SMS is connected or read. These starter rows are seeded once in local storage; remove individual rows or use **Clear history** if needed.
+My biggest takeaway was seeing how an AI agent can understand a person's money, respond to simple voice commands, and—when explicitly authorized—eventually take action on their behalf.
 
-## Local Whisper transcription setup
+I started building **Finvait** around a simple idea: instead of manually maintaining spreadsheets and categorizing every purchase, someone should be able to tell an assistant what they spent and later ask questions like:
 
-The open-source [whisperflow-local](https://github.com/cth9191/whisperflow-local) project is a Windows dictation app licensed under MIT and uses `faster-whisper`. Finvait uses the same open-source transcription engine in its existing backend; it does not install or run that separate desktop app, its CUDA-only large-v3-turbo configuration, or its optional Ollama cleanup model. The Finvait default is the multilingual `base` model running on CPU with int8 quantization.
+- Where did my spending increase this week?
+- Which subscriptions are taking up too much of my budget?
+- How have my spending habits changed?
 
-Install backend dependencies and start the backend in a separate terminal:
+The goal is to turn the transactions, receipts, and records that are tedious to maintain into financial information people can access through a conversation. The MVP is still a work in progress. The user-facing demo does not yet include connected WhatsApp messaging or a live phone-call experience; backend integration prototypes are present but need configuration and end-to-end deployment.
 
-```powershell
-pip install -r backend\requirements.txt
-uvicorn app.main:app --app-dir backend --reload --port 8000
+## User flow
+
+### Try the local demo
+
+1. Start the backend and frontend using the instructions below.
+2. Open the Vite URL, usually `http://localhost:5173`.
+3. Use the main microphone control to record a short expense or choose an audio file. Recording begins only after you grant microphone permission and start it.
+4. Stop the recording and choose **Transcribe locally**. The local Whisper model returns a transcript. The MVP displays the transcript but does not turn custom audio into a saved transaction.
+5. To explore the scripted experience, choose a preset note and run its demo. The preset transcript, extracted transaction JSON, and possible duplicate alert are illustrative and do not come from the uploaded audio or a live SMS.
+6. Review the activity history and week-over-week comparison. Starter rows and subscription messages are illustrative and are stored in this browser's local storage.
+7. Use **Generate speech** to create audio for the suggested response. **Copy audio link** shares a lightweight listening page rather than the full dashboard; open that link on a device that can reach the demo host.
+
+## How it works
+
+```text
+Voice recording or audio upload
+              │
+              ▼
+React client ── POST audio ──► FastAPI
+                                  │
+                                  ▼
+                       faster-whisper (local)
+                                  │
+                                  ▼
+                       Transcript in browser
+
+Preset examples ──► Scripted demo results and illustrative duplicate review
+Activity records ──► Browser local storage ──► Calendar-week comparison
+Suggested response ──► Kokoro ONNX (local) ──► WAV audio / listening link
 ```
 
-The Vite development server proxies `/api` requests to `http://127.0.0.1:8000`. The first transcription downloads the selected model from Hugging Face and may take a few minutes; after that, transcription runs locally without sending audio to an external API. The model can be changed with `LOCAL_WHISPER_MODEL` (for example, `tiny`, `base`, or `small`). Microphone recording requires browser permission and a secure context such as `localhost`.
+The intended product principle is that calculations and transaction records should be grounded in evidence: language models may help interpret a request or explain a result, but should not invent transactions, amounts, or reasons for spending changes. The current presentation experience is a prototype, and its preset demo data is clearly distinguished from live user data.
 
-## Add anonymous voice-note audio
+## Technology
 
-To use your own recordings, copy them into `frontend\public\voice-notes\` with these names:
+| Area | Technology |
+| --- | --- |
+| Web app | React, TypeScript, Vite |
+| API | Python, FastAPI, Pydantic |
+| Local speech-to-text | `faster-whisper` with a multilingual Whisper model |
+| Local text-to-speech | Kokoro ONNX with an open-source Kokoro model |
+| Finance backend prototype | SQLite, deterministic finance calculations |
+| Optional integrations | OpenAI API, WhatsApp Cloud API, Retell |
+| Tests | Pytest; TypeScript and Vite production build |
 
-- `voice-note-01.mp3` for the first anonymous note
-- `voice-note-02.mp3` for the second anonymous note
+No API key is needed for the browser's local Whisper transcription or Kokoro speech generation. Optional OpenAI, WhatsApp, and Retell services require their own credentials and provider setup. Never put backend secrets in frontend code or commit a populated `.env` file.
 
-The page automatically plays a file at that path when present. Alternatively, use **Add an audio clip** on either note to select a file from your computer. Keep recordings free of private details: browser-served files are publicly accessible to anyone who can reach the site. Local voice-note audio files are excluded from Git by default.
+## Repository structure
 
-## Run the presentation
+```text
+.
+├── backend/
+│   ├── app/
+│   │   ├── config.py                 # Environment-based settings
+│   │   ├── database.py               # SQLite transaction and call storage
+│   │   ├── finance.py                # Deterministic finance answers
+│   │   ├── integrations.py           # OpenAI, WhatsApp, and Retell adapters
+│   │   ├── local_speech.py           # Local Kokoro ONNX speech generation
+│   │   ├── local_transcription.py    # Local faster-whisper transcription
+│   │   └── main.py                   # FastAPI routes and static serving
+│   ├── data/                         # Local data and cached models (not committed)
+│   ├── requirements.txt
+│   └── tests/                        # API and finance tests
+├── frontend/
+│   ├── public/
+│   │   ├── listen.html               # Standalone spoken-response player
+│   │   └── voice-notes/              # Optional local demo audio files
+│   ├── src/
+│   │   ├── App.tsx                   # Demo, recorder, history, and speech UI
+│   │   ├── main.tsx                  # React entry point
+│   │   └── style.css                 # Responsive Finvait styles
+│   ├── package.json
+│   └── vite.config.ts                # Development API proxy
+├── .env.example                      # Safe configuration template
+├── .gitignore
+└── README.md
+```
 
-Requirements: Node.js 20.19+.
+## Run locally
+
+Requirements: **Python 3.10+** and **Node.js 20.19+**.
+
+### 1. Configure and start the backend
+
+From the repository root, open a terminal:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r backend\requirements.txt
+Copy-Item .env.example .env
+python -m uvicorn app.main:app --app-dir backend --reload --port 8000
+```
+
+If PowerShell blocks virtual-environment activation, use the Python executable directly instead:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --app-dir backend --reload --port 8000
+```
+
+The `.env` file is optional for the local demo. Its default settings use demo mode and local transcription. The first Whisper transcription downloads the configured model and may take a few minutes; the default is the multilingual `base` model on CPU with int8 quantization. Set `LOCAL_WHISPER_MODEL` in `.env` to `tiny`, `base`, or `small` to choose another model.
+
+### 2. Start the frontend
+
+In a second terminal:
 
 ```powershell
 cd frontend
@@ -46,17 +133,44 @@ npm install
 npm run dev
 ```
 
-Open the Vite URL printed in the terminal (normally `http://localhost:5173`). To create a production build:
+Open the URL Vite prints, normally `http://localhost:5173`. The development server forwards `/api` requests to the local FastAPI server at `http://127.0.0.1:8000`.
+
+For microphone access, use `localhost` or another secure browser context and allow microphone permission. On another device on the same Wi-Fi, run Vite with `npm run dev -- --host 0.0.0.0` and open the network URL it prints. The backend remains local to the host. Browser microphone access on a plain HTTP LAN address may be blocked; uploading audio does not require microphone permission.
+
+### Optional configuration
+
+Add provider credentials only when developing those integrations. The available variable names and their purposes are documented in `.env.example`. Keep secrets out of Git; `.env` is ignored.
+
+## Demo notes and trust boundaries
+
+- Preset voice-note transactions, possible duplicate-payment alerts, subscription messages, and some comparison entries are illustrative presentation data—not verified account activity or messages.
+- A possible match means **needs review**; it is not a fraud determination. The scripted confirmation actions affect the demo display only.
+- Custom microphone recordings and uploads are sent to the local FastAPI backend for transcription. The transcription endpoint does not persist the audio or create a transaction; the transcript is shown in the current browser session.
+- The activity history is stored in browser local storage. It is not synchronized to an account or backend.
+- The Kokoro model files are downloaded on first use and cached under `backend\data\kokoro\`; synthesis then runs locally. Audio is returned as a WAV. Browsers may require a user tap to play audio.
+- Do not use the scripted demo as a real financial record or present its sample data as live account activity.
+- The backend includes WhatsApp webhook, Retell webhook/custom-function, and finance-query routes. These are integration prototypes; they require provider credentials, public callback configuration, authorization settings, and end-to-end testing. They are not connected to the presentation screen by default.
+- Subscription cancellation, payments, and other consequential actions are not performed by this MVP.
+
+## Checks
+
+Run the backend tests from the repository root:
 
 ```powershell
+python -m pytest -q
+```
+
+Build and type-check the frontend:
+
+```powershell
+cd frontend
 npm run build
 ```
 
-## Prototype boundaries
+## Looking ahead
 
-- The payment alert is illustrative and is not retrieved from an SMS inbox.
-- The “same payment” and “keep both” actions change only the presentation state; they do not change a financial ledger.
-- The custom voice recorder uses real local Whisper transcription and saves reviewed transaction details only in the current browser. It does not synchronize records to an account or backend. WhatsApp ingestion and live phone calls are outside this presentation flow.
-- This repository also contains an earlier FastAPI/SQLite and Retell integration prototype. The Finvait presentation screen does not currently call those services.
+Finvait is still a work in progress. I’m excited to keep building, learning, and exploring what Voice AI can do to make personal finance more approachable—while keeping user consent, privacy, and reliable financial records at the center.
 
-Do not use the scripted experience as a real financial record or present its sample data as live account activity.
+## Acknowledgements
+
+Thank you to **Anupam Singh**, Co-founder & CEO of Digia, and **Mayank Agarwal**, Co-founder & CEO of Bachatt, for hosting the Voice AI x Fintech Buildathon at Bachatt's office and creating space to learn by building.
